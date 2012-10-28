@@ -1,0 +1,1 @@
+EcoWatt 850, est appareil de monitoring à distance de consommation ou production électrique d'un compteur ou d'une source d'électricité. Livré avec logiciel sous windows, ce projet permet la récupération des information sous la forme d'un fichier csv sous linux
