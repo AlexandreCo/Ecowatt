@@ -32,7 +32,6 @@
 #define MAX_BUF	1024
 #define MAX_DEV	30
 #define MIN_DETECT	7
-#define RS_TIMEOUT	10000	//1ms
 #define MAX_VERBOSE_LEVEL 2
 #define CVS_FILE_NAME	"data.csv"
 #define NB_TRY 10
@@ -50,12 +49,6 @@ static time_t _tTime;
 struct termios term, old;
 int (*pvPrint1) (char * acFormat, ...);
 int (*pvPrint2) (char * acFormat, ...);
-
-
-static void rs_vSigcatch( int sig )
-{
-	//printf("   Comm USB: timeout\n" );
-}
 
 int iQuiet (char * acFormat, ...)
 {
@@ -82,30 +75,14 @@ static void _vUsage(char * acName)
 
 }
 
-unsigned int alarm_us (long int liUsec)
-{
-	struct itimerval old, new;
-	new.it_interval.tv_usec = 0;
-	new.it_interval.tv_sec = 0;
-	new.it_value.tv_usec = liUsec;
-	new.it_value.tv_sec = 0;
-	if (setitimer (ITIMER_REAL, &new, &old) < 0)
-		return 0;
-	else
-		return old.it_value.tv_sec;
-}
 
 int iGetData(int fd,const unsigned char * aucTx,int iTxLen, unsigned char pucRx[MAX_BUF])
 {
 	struct sigaction action;
 	int i=0,ret;
-	int iTimeout=RS_TIMEOUT;
 	int iOut=0;
 	unsigned int uiRead=0;
 	unsigned char buf[MAX_BUF];
-
-	action.sa_handler = rs_vSigcatch;
-	sigaction(SIGALRM, &action, NULL);
 
 	pvPrint2("=> ");
 	ret=write(fd,aucTx,iTxLen);
@@ -125,33 +102,35 @@ int iGetData(int fd,const unsigned char * aucTx,int iTxLen, unsigned char pucRx[
 		do
 		{
 
-			alarm_us (RS_TIMEOUT);
 			ret=read(fd,(void*)buf,MAX_BUF);
 			if(ret>0)
 			{
-				alarm(0);
 				pvPrint2("<= ");
 				for(i=0;i<ret;i++)
 				{
 					pvPrint2("0x%02X ",(unsigned char)buf[i]);
 					pucRx[i+uiRead]=buf[i];
 				}
-				pvPrint2("\n");
 				uiRead+=ret;
+				pvPrint2(" (%d)\n",uiRead);
 			}
 			else
 			{
-				iOut=1;
-				if(errno!=EINTR)
+				if(ret==0)
 				{
-					uiRead=ret; //pas de timeout : erreur
-					alarm(0);
-					perror("read");
+					//timeout
+					iOut=1;
 				}
-
+				else
+				{
+					//erreur
+					perror("read");
+					uiRead=ret;
+					printf("ret =%d\n",ret);
+				}
 			}
-		}while(iOut==0);
 
+		}while(iOut==0);
 	}
 
 	return uiRead;
@@ -460,9 +439,8 @@ void vInitCom(int fd)
 	term.c_lflag = 0;
 	term.c_oflag = 0;
 
-	/* 1 caractère suffit */
-	term.c_cc[VMIN] = 1;
-	term.c_cc[VTIME] = 5;
+	term.c_cc[VMIN] = 0;
+	term.c_cc[VTIME] = 1;
 
 	/* Inhibe le controle de flux XON/XOFF */
 	term.c_iflag &= ~(IXON|IXOFF|IXANY);
