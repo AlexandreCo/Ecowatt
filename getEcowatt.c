@@ -37,7 +37,6 @@
 #define NB_TRY 10
 #define NB_JOUR 256
 #define NB_HEURE 24
-#define RATIO 1.25
 #define HEADER_DAY 4
 float afKWatt[NB_JOUR][NB_HEURE];
 
@@ -499,7 +498,7 @@ static void vSaveData(void)
 
 		//save KWatt per day
 		fprintf(fp,"\nKWatt / jour\n");
-		fprintf(fp,"Jour;Mesure;Compteur\n");
+		fprintf(fp,"Jour;Mesure\n");
 		tTime=_tTime;
 		float fToTalJour;
 
@@ -513,7 +512,7 @@ static void vSaveData(void)
 				fToTalJour+=afKWatt[iDay][iHour];
 
 			}
-			fprintf(fp,"%02d/%02d/%02d;%f;%f\n", tb->tm_mday,tb->tm_mon+1,tb->tm_year-100,fToTalJour,fToTalJour*RATIO);
+			fprintf(fp,"%02d/%02d/%02d;%f\n", tb->tm_mday,tb->tm_mon+1,tb->tm_year-100,fToTalJour);
 			tTime-=24*60*60;
 		}
 
@@ -527,14 +526,14 @@ static void vSaveData(void)
 		iMoisEnCours=tb->tm_mon;
 		iAnneeEnCours=tb->tm_year;
 		fprintf(fp,"\nKWatt / mois\n");
-		fprintf(fp,"Mois;Mesure;Compteur\n");
+		fprintf(fp,"Mois;Mesure\n");
 		for(iDay=0;iDay<NB_JOUR;iDay++)
 		{
 
 			tb = localtime(&tTime);
 			if(iMoisEnCours!=tb->tm_mon)
 			{
-				fprintf(fp,"%02d/%02d;%f;%f\n",iMoisEnCours+1,iAnneeEnCours-100,fToTalMois,fToTalMois*RATIO);
+				fprintf(fp,"%02d/%02d;%f\n",iMoisEnCours+1,iAnneeEnCours-100,fToTalMois);
 				fToTalMois=0;
 			}
 			iMoisEnCours=tb->tm_mon;
@@ -549,7 +548,6 @@ static void vSaveData(void)
 
 		fprintf(fp,"\nKWatt total ;%f;\n",fToTalAn);
 		fprintf(fp,"KWatt / an (estimation);%f;\n",fToTalAn*365/255);
-		fprintf(fp,"KWatt / an (estimation compteur);%f;\n",(fToTalAn*365/255)*RATIO);
 
 		fclose(fp);
 	}
