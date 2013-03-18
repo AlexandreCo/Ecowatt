@@ -39,11 +39,11 @@
 #define NB_HEURE 24
 #define HEADER_DAY 4
 float afKWatt[NB_JOUR][NB_HEURE];
-
-
+#define API_KEY "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 static int _iVerbose=0;
 static char _acDevice[MAX_DEV];
 static int _iFunction=-1;
+static char _bEmon =0;
 static time_t _tTime;
 struct termios term, old;
 int (*pvPrint1) (char * acFormat, ...);
@@ -69,9 +69,9 @@ static void _vUsage(char * acName)
 {
 	printf("usage : %s [-v 1] [-d device] [-h]\n",acName);
 	printf("-h, --help : aide\n");
-	printf("-v n, --verbose : verbose n est le niveau de trace 1 ou 0\n");
+	printf("-v n, --verbose : verbose n est le niveau de trace 2, 1 ou 0\n");
 	printf("-d \"/dev/ttyUSB0\", --device : device\n");
-
+	printf("-e ,--emoncms3 : envoi donnees au format emoncms3\n");
 }
 
 
@@ -367,13 +367,13 @@ int iGetDate(int fd)
 		t.tm_year = aucRecu[HEADER_DAY]		+ 100;
 		t.tm_mon  = aucRecu[HEADER_DAY+1] 	- 1;
 		t.tm_mday = aucRecu[HEADER_DAY+2];
-		t.tm_hour = aucRecu[HEADER_DAY+3];
-		t.tm_min  = aucRecu[HEADER_DAY+4];
+		t.tm_hour = 25;
+		t.tm_min  = 0;
 		t.tm_sec  = 0;
 
 		_tTime = mktime(&t);
 
-		pvPrint1("Date et heure: %s\n", ctime(&_tTime));
+		printf("Date et heure: %s", ctime(&_tTime));
 		ret=0;
 	}
 	return ret;
@@ -556,6 +556,30 @@ static void vSaveData(void)
 }
 
 
+//write data on emoncms3 server
+static void vSendDataEmoncs3(void)
+{
+	int iDay,iHour;
+	struct termios term;
+	struct tm *tb;
+	time_t tTime=_tTime;
+	char buf[255];
+
+	//save KWatt per hour
+	tTime=_tTime-(iDay*24+(NB_HEURE-iHour-1))*60*60;
+	for(iDay=NB_JOUR-1;iDay>=0;iDay--)
+	{
+		for(iHour=0;iHour<NB_HEURE;iHour++)
+		{
+			char acCmd[255];
+			sprintf(acCmd,"wget \"http://192.168.0.14/emoncms3/emoncms3//api/post?apikey=%s&time=%ld&node=1000&json={P:%f}\" -qO - >/dev/null",API_KEY,tTime, afKWatt[iDay][iHour]*1000);
+			system(acCmd);
+			printf("%d/%d;%ld;%f;%s",iDay*NB_HEURE+NB_HEURE-iHour,NB_JOUR*NB_HEURE,tTime,afKWatt[iDay][iHour]*1000,ctime(&tTime));
+			tTime=_tTime-(iDay*24+(NB_HEURE-iHour-1))*60*60;
+		}
+	}
+}
+
 static int iRun()
 {
 	int fd=0,i=0,j,ret=0,try;
@@ -606,7 +630,10 @@ static int iRun()
 				}
 			}
 
-			vSaveData();
+			if(_bEmon)
+				vSendDataEmoncs3();
+			else
+				vSaveData();
 		}
 		else
 		{
@@ -626,6 +653,7 @@ int iGetArg(int argc, char *argv[])
 {
 	int i;
 	int level;
+	_bEmon=0;
 	for(i=0;i<argc;i++)
 	{
 		//mode verbeux ou pas
@@ -656,6 +684,11 @@ int iGetArg(int argc, char *argv[])
 		{
 			_vUsage(argv[0]);
 			return -1;
+		}
+
+		if((!strcmp(argv[i],"-e"))||(!strcmp(argv[i],"--emoncms3")))
+		{
+			_bEmon=1;
 		}
 
 		if((!strcmp(argv[i],"-d"))||(!strcmp(argv[i],"--device")))
