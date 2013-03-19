@@ -18,6 +18,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -29,8 +30,11 @@
 #include <errno.h>
 #include <sys/time.h>
 #include <time.h>
+#include <mysql.h>
+
 #define MAX_BUF	1024
 #define MAX_DEV	30
+#define MAX_CHAINE	255
 #define MIN_DETECT	7
 #define MAX_VERBOSE_LEVEL 2
 #define CVS_FILE_NAME	"data.csv"
@@ -39,15 +43,22 @@
 #define NB_HEURE 24
 #define HEADER_DAY 4
 float afKWatt[NB_JOUR][NB_HEURE];
-#define API_KEY "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 static int _iVerbose=0;
 static char _acDevice[MAX_DEV];
 static int _iFunction=-1;
 static char _bEmon =0;
+static char _bSql=0;
 static time_t _tTime;
 struct termios term, old;
 int (*pvPrint1) (char * acFormat, ...);
 int (*pvPrint2) (char * acFormat, ...);
+
+char _acServer[MAX_CHAINE] = {0};
+char _acUser[MAX_CHAINE] = {0};
+char _acPassword[MAX_CHAINE]= {0};
+char _acDatabase[MAX_CHAINE] = {0};
+char _acFeed[MAX_CHAINE]= {0};
+char _acApiKey[MAX_CHAINE]= {0};
 
 int iQuiet (char * acFormat, ...)
 {
@@ -71,7 +82,9 @@ static void _vUsage(char * acName)
 	printf("-h, --help : aide\n");
 	printf("-v n, --verbose : verbose n est le niveau de trace 2, 1 ou 0\n");
 	printf("-d \"/dev/ttyUSB0\", --device : device\n");
-	printf("-e ,--emoncms3 : envoi donnees au format emoncms3\n");
+	printf("-e <api_key>,--emoncms3 : envoi donnees au format emoncms3\n");
+	printf("-s <server> <user> <pass> <database> <feed> ,--sql : envoi donnees vers sql\n");
+	printf("-s 192.168.0.14 <user> <pass> emoncms feed_37 ,--sql : envoi donnees vers sql\n");
 }
 
 
@@ -566,18 +579,89 @@ static void vSendDataEmoncs3(void)
 	char buf[255];
 
 	//save KWatt per hour
-	tTime=_tTime-(iDay*24+(NB_HEURE-iHour-1))*60*60;
+	tTime=_tTime-(NB_JOUR*24)*3600;
 	for(iDay=NB_JOUR-1;iDay>=0;iDay--)
 	{
 		for(iHour=0;iHour<NB_HEURE;iHour++)
 		{
 			char acCmd[255];
-			sprintf(acCmd,"wget \"http://192.168.0.14/emoncms3/emoncms3//api/post?apikey=%s&time=%ld&node=1000&json={P:%f}\" -qO - >/dev/null",API_KEY,tTime, afKWatt[iDay][iHour]*1000);
+			sprintf(acCmd,"wget \"http://192.168.0.14/emoncms3/emoncms3//api/post?apikey=%s&time=%ld&node=1000&json={P:%f}\" -qO - >/dev/null",_acApiKey,tTime, afKWatt[iDay][iHour]*1000);
 			system(acCmd);
-			printf("%d/%d;%ld;%f;%s",iDay*NB_HEURE+NB_HEURE-iHour,NB_JOUR*NB_HEURE,tTime,afKWatt[iDay][iHour]*1000,ctime(&tTime));
+			printf("%ld;%f;%s",tTime,afKWatt[iDay][iHour]*1000,ctime(&tTime));
 			tTime=_tTime-(iDay*24+(NB_HEURE-iHour-1))*60*60;
 		}
 	}
+}
+#define MAX_REQ_SQL 255
+//write data on emoncms3 server via mysql
+static void vSendDataMysql(void)
+{
+	MYSQL *conn;
+	MYSQL_RES *res;
+	MYSQL_ROW row;
+
+	int iTime=0;
+	time_t tTime=_tTime;
+	int iDay,iHour;
+	char acBuf[MAX_REQ_SQL];
+	conn = mysql_init(NULL);
+	/* Connect to database */
+	if (!mysql_real_connect(conn, _acServer,
+			_acUser, _acPassword, _acDatabase, 0, NULL, 0)) {
+		fprintf(stderr, "%s\n", mysql_error(conn));
+		return;
+	}
+	/* GET last entry */
+	sprintf(acBuf,"SELECT MAX(time)  FROM  `%s`",_acFeed);
+	if (mysql_query(conn, acBuf)) {
+		fprintf(stderr, "%s\n", mysql_error(conn));
+		return;
+	}
+	res = mysql_use_result(conn);
+	while ((row = mysql_fetch_row(res)) != NULL)
+		iTime=atoi(row[0]);
+
+
+
+	//save KWatt per hour
+	tTime=_tTime-(NB_JOUR*24)*3600;
+	for(iDay=NB_JOUR-1;iDay>=0;iDay--)
+	{
+		for(iHour=0;iHour<NB_HEURE;iHour++)
+		{
+			char acCmd[255];
+			float fWatt=afKWatt[iDay][iHour]*1000;
+
+			//update last entry
+			if((tTime==iTime)&&(afKWatt[iDay][iHour]!=0)&&(iDay*NB_HEURE+NB_HEURE-iHour!=6144))
+			{
+				printf("update %ld;%f;%s",tTime,fWatt,ctime(&tTime));
+
+				sprintf(acBuf,"UPDATE %s SET data = %f  WHERE time=%ld",_acFeed ,fWatt,tTime);
+				if (mysql_query(conn, acBuf)) {
+					fprintf(stderr, "%s\n", mysql_error(conn));
+					return;
+				}
+			}
+			//insert new one
+			if((tTime>iTime)&&(afKWatt[iDay][iHour]!=0)&&(iDay*NB_HEURE+NB_HEURE-iHour!=6144))
+			{
+				printf("insert %ld;%f;%s",tTime,fWatt,ctime(&tTime));
+				sprintf(acBuf,"INSERT INTO %s (time,data) VALUES(%ld,%f)",_acFeed ,tTime,fWatt);
+				if (mysql_query(conn, acBuf)) {
+					fprintf(stderr, "%s\n", mysql_error(conn));
+					return;
+				}
+			}
+			tTime=_tTime-(iDay*24+(NB_HEURE-iHour-1))*60*60;
+		}
+	}
+
+	/* close connection */
+	mysql_free_result(res);
+	mysql_close(conn);
+
+
 }
 
 static int iRun()
@@ -632,8 +716,11 @@ static int iRun()
 
 			if(_bEmon)
 				vSendDataEmoncs3();
-			else
-				vSaveData();
+
+			if(_bSql)
+				vSendDataMysql();
+
+			vSaveData();
 		}
 		else
 		{
@@ -689,6 +776,12 @@ int iGetArg(int argc, char *argv[])
 		if((!strcmp(argv[i],"-e"))||(!strcmp(argv[i],"--emoncms3")))
 		{
 			_bEmon=1;
+			if(argc>=i+1)
+			{
+				i++;
+				pvPrint1("ApiKey %s\n",argv[i]);
+				strncpy(_acApiKey,argv[i],MAX_CHAINE);
+			}
 		}
 
 		if((!strcmp(argv[i],"-d"))||(!strcmp(argv[i],"--device")))
@@ -714,7 +807,51 @@ int iGetArg(int argc, char *argv[])
 			}
 			printf("mode function %d\n",_iFunction);
 		}
+
+		if((!strcmp(argv[i],"-s"))||(!strcmp(argv[i],"--sql")))
+		{
+			_bSql=1;
+			if(argc>=i+5)
+			{
+				i++;
+				pvPrint1("Server %s\n",argv[i]);
+				strncpy(_acServer,argv[i],MAX_CHAINE);
+				i++;
+				pvPrint1("User %s\n",argv[i]);
+				strncpy(_acUser,argv[i],MAX_CHAINE);
+				i++;
+				pvPrint1("Password %s\n",argv[i]);
+				strncpy(_acPassword,argv[i],MAX_CHAINE);
+				i++;
+				pvPrint1("Database %s\n",argv[i]);
+				strncpy(_acDatabase,argv[i],MAX_CHAINE);
+				i++;
+				pvPrint1("Feed %s\n",argv[i]);
+				strncpy(_acFeed,argv[i],MAX_CHAINE);
+
+			}
+		}
 	}
+
+	if(_bSql==1)
+	{
+		if ((_acServer[0]==0)||(_acUser[0]==0)||(_acPassword[0]==0)||(_acDatabase[0]==0)||(_acFeed[0]==0))
+		{
+			_vUsage(argv[0]);
+			return -1;
+		}
+	}
+
+	if(_bEmon==1)
+	{
+		if (_acApiKey[0]==0)
+		{
+			_vUsage(argv[0]);
+			return -1;
+		}
+	}
+
+
 	return 0;
 }
 
