@@ -1,4 +1,5 @@
 getEcowatt
+emoncms3
 *.csv
 *~
 .cproject
