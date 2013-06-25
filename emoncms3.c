@@ -27,8 +27,8 @@ static void vSendDataMysql(void)
 	MYSQL_RES *res;
 	MYSQL_ROW row;
 	int i;
-	t_data atPowerMois[255];
-	t_data atPowerJour[255];
+	t_data atPowerMois[1000];
+	t_data atPowerJour[1000];
 	int iNbMois=0;
 	int iNbJour=0;
 	int iTime=0;
